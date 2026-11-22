@@ -27,6 +27,7 @@ import type {
   FsWriteOutcome,
 } from './types.ts'
 
+export { buildEditNotFoundDiagnostic } from './edit-diagnostic.ts'
 export { fsErrorFromErrno } from './errno.ts'
 export {
   FS_ERROR_CODES,

@@ -8,7 +8,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { ToolArgsError, defineTool } from '@deepseek-ai/dsh-tools'
 import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-tools'
-import type {} from '@deepseek-ai/dsh-fs'
+import { FsError, buildEditNotFoundDiagnostic } from '@deepseek-ai/dsh-fs'
+import type { FsTarget } from '@deepseek-ai/dsh-fs'
 import { computeHunkDiffs, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
 import { mutationResult } from './mutation-result.ts'
@@ -66,6 +67,26 @@ export function formatEditOutput(displayPath: string, replaceAll: boolean): stri
   return replaceAll
     ? `The file ${displayPath} has been updated. All occurrences were successfully replaced.`
     : `The file ${displayPath} has been updated successfully.`
+}
+
+async function enrichEditNotFound(
+  ctx: Context,
+  target: FsTarget,
+  oldString: string,
+  error: FsError,
+  signal: AbortSignal,
+): Promise<FsError> {
+  let content: string
+  try {
+    content = await ctx.fs.readText(target, signal)
+  } catch (readError: unknown) {
+    void readError // Preserve the original FS_EDIT_NOT_FOUND error when diagnostic reading fails.
+    return error
+  }
+  const diagnostic = buildEditNotFoundDiagnostic(content, oldString)
+  return diagnostic === undefined
+    ? error
+    : new FsError(`${error.message}\n${diagnostic}`, error.code, { cause: error })
 }
 
 /**
@@ -140,6 +161,9 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
           sandboxPolicy,
         )
       } catch (error: unknown) {
+        if (error instanceof FsError && error.code === 'FS_EDIT_NOT_FOUND') {
+          throw await enrichEditNotFound(ctx, target, input.oldString, error, exec.signal)
+        }
         // A sandbox denial becomes the shared [sandbox: …] marker (the model
         // recognizes it from bash); guarded mutation failures receive their
         // stable model-facing diagnostic; anything else passes through.
